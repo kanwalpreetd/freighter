@@ -6,14 +6,14 @@
   "dependencies": {
     "@stellar/js-xdr": "^3.1.1",
     "bignumber.js": "^9.1.1",
-    "prettier": "^2.0.5",
+    "prettier": "^3.3.3",
     "stellar-sdk": "yarn:stellar-sdk@^12.1.0",
     "stellar-sdk-next": "yarn:stellar-sdk@12.1.0",
-    "typescript": "~3.7.2",
+    "typescript": "~5.5.4",
     "webextension-polyfill": "^0.10.0"
   },
   "devDependencies": {
-    "@lavamoat/allow-scripts": "^2.3.1",
+    "@lavamoat/allow-scripts": "^3.1.0",
     "@stellar/prettier-config": "^1.0.1"
   },
   "lavamoat": {
