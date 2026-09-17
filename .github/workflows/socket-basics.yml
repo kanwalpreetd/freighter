@@ -1,0 +1,79 @@
+# Socket Basics security scan for freighter.
+# Upstream: https://github.com/SocketDev/socket-basics
+# Scanner settings live in .socket-basics.json; SAST path exclusions live in
+# .semgrepignore.
+#
+# This workflow does SAST through OpenGrep and secret scanning through
+# TruffleHog, and submits results to Socket.dev
+
+name: Socket Basics security scan
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "22 13 * * 6"
+
+permissions:
+  contents: read
+
+jobs:
+  socket-basics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          # The scan step mounts the whole workspace, including .git, into a
+          # third-party container. Leaving the workflow token in .git/config
+          # would hand that container a credential it has no need for.
+          # Nothing here performs authenticated git operations.
+          persist-credentials: false
+
+      - name: Run Socket Basics
+        env:
+          SOCKET_SECURITY_API_TOKEN: ${{ secrets.SOCKET_SECURITY_API_TOKEN }}
+          SOCKET_ORG: stellar
+        run: |
+          set +e
+          docker run --rm \
+            -v "$PWD:/github/workspace" \
+            -w /github/workspace \
+            -e SOCKET_SECURITY_API_TOKEN \
+            -e SOCKET_ORG \
+            -e GITHUB_REPOSITORY \
+            -e GITHUB_REF_NAME \
+            -e GITHUB_SHA \
+            ghcr.io/socketdev/socket-basics@sha256:d463bae84f21d0240d5e197acb81e95144a966a20ab7cd05cca3a70e1796a4bb \
+            --config .socket-basics.json 2>&1 | tee /tmp/socket-basics.log
+          rc=${PIPESTATUS[0]}
+
+          # Examine components count in .socket.facts.json to establish if the
+          # scan ran successfully, and count alerts whose action is error or
+          # warn in .socket.facts.json to decide on the warning annotation.
+          components=$(python3 -c 'import json;d=json.load(open(".socket.facts.json"));print(len(d.get("components") or []))' 2>/dev/null || echo 0)
+          findings=$(python3 -c 'import json;d=json.load(open(".socket.facts.json"));print(sum(1 for c in (d.get("components") or []) for a in (c.get("alerts") or []) if a.get("action") in ("error","warn")))' 2>/dev/null || echo 0)
+
+          if [ "${components:-0}" -eq 0 ]; then
+            # ${rc:-1} would not fail here: rc is the string "0", which :- does not substitute.
+            echo "::error::Socket Basics did not complete: no results in .socket.facts.json (docker exit ${rc:-unknown})"
+            if [ "${rc:-0}" -eq 0 ]; then rc=1; fi
+            exit "$rc"
+          fi
+
+          # Submission is detected by matching the scanner's error text. This is
+          # brittle -- a reworded message would stop being detected -- but it is
+          # the only approach available today: socket-basics catches submission
+          # exceptions, logs them and returns normally, so its exit code is
+          # unaffected (that code means "high/critical found", nothing else),
+          # and .socket.facts.json is written BEFORE submission and never
+          # records the outcome. The image is pinned by digest, so the wording
+          # cannot change until someone bumps the pin -- RE-CHECK THIS STRING
+          # WHENEVER THE DIGEST IS BUMPED.
+          if grep -q "Failed to submit socket facts file" /tmp/socket-basics.log; then
+            echo "::error::Socket Basics scan completed but results were not submitted to Socket"
+            exit 1
+          fi
+
+          if [ "${findings:-0}" -gt 0 ]; then
+            echo "::warning::Socket Basics found ${findings} high/critical finding(s)"
+          fi
+          exit 0
